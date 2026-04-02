@@ -22,6 +22,8 @@ from qdrant_client.models import (
   Filter, FieldCondition, MatchValue,
 )
 
+API_NAME = os.getenv("API_NAME", "Sentiment Analysis API")
+
 # ── Logging ───────────────────────────────────────────────────────────────────
 logging.basicConfig(level=os.getenv("LOG_LEVEL", "INFO").upper())
 logger = logging.getLogger("sentiment-api")
@@ -78,7 +80,7 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(
-  title="Sentiment Analysis API",
+  title=API_NAME,
   version="1.0.0",
   lifespan=lifespan,
 )
