@@ -1,0 +1,47 @@
+# ── Version control ───────────────────────────────────────────────────────────
+.git
+.gitignore
+
+# ── Environment & secrets ────────────────────────────────────────────────────
+.env
+.env.*
+!.env.example
+
+# ── Python artifacts ─────────────────────────────────────────────────────────
+__pycache__
+*.py[cod]
+*.egg-info
+.venv
+venv
+
+# ── IDE / Editor ─────────────────────────────────────────────────────────────
+.vscode
+.idea
+*.swp
+*.swo
+
+# ── OS files ─────────────────────────────────────────────────────────────────
+.DS_Store
+Thumbs.db
+
+# ── Docker ───────────────────────────────────────────────────────────────────
+Dockerfile
+docker-compose*.yml
+compose.yaml
+
+# ── Documentation & samples ──────────────────────────────────────────────────
+README.md
+SYSTEM_PROMPT.txt
+*.csv
+LICENSE
+
+# ── Testing ──────────────────────────────────────────────────────────────────
+.pytest_cache
+htmlcov
+.coverage
+
+# ── Misc ─────────────────────────────────────────────────────────────────────
+*.log
+*.bak
+*.md
+.editorconfig
