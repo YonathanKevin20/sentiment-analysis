@@ -7,7 +7,7 @@ import csv
 import io
 import time
 import logging
-from typing import Optional
+from typing import Optional, Annotated
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, HTTPException, UploadFile, File, Request, Security, Depends
@@ -219,7 +219,7 @@ class AnalyzeRequest(BaseModel):
   content: str = Field(..., min_length=1, max_length=MAX_CONTENT_LEN)
 
 class AnalyzeBatchRequest(BaseModel):
-  items: list[str] = Field(..., min_length=1, max_length=MAX_ANALYZE_BATCH, description="List of content strings to analyse (max MAX_ANALYZE_BATCH).")
+  items: list[Annotated[str, Field(min_length=1, max_length=MAX_CONTENT_LEN)]] = Field(..., min_length=1, max_length=MAX_ANALYZE_BATCH, description=f"List of content strings to analyse (max {MAX_ANALYZE_BATCH} items, each up to {MAX_CONTENT_LEN} chars).")
 
 class UpdateRequest(BaseModel):
   content: Optional[str] = Field(None, max_length=MAX_CONTENT_LEN)
