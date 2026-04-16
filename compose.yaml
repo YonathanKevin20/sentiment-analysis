@@ -1,6 +1,7 @@
 services:
   qdrant:
     image: qdrant/qdrant:latest
+    restart: always
     ports:
       - "6333:6333"
     volumes:
@@ -9,10 +10,16 @@ services:
   api:
     build: .
     image: sentiment-analysis-api:1.0.0
+    restart: unless-stopped
     ports:
       - "${API_PORT-8000}:8000"
     env_file:
       - .env
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
     depends_on:
       - qdrant
 

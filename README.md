@@ -65,6 +65,7 @@ Interactive docs: `http://localhost:8000/docs`
 | `MAX_TRAIN_ITEMS` | `256` | Max items per `/train` request |
 | `MAX_IMPORT_ROWS` | `10000` | Max rows per CSV import |
 | `MAX_UPLOAD_MB` | `10` | Max CSV file size in MB |
+| `MAX_ANALYZE_BATCH` | `64` | Max items per `/analyze-batch` request |
 | `LOG_LEVEL` | `INFO` | Logging level (`DEBUG`, `INFO`, `WARNING`, `ERROR`) |
 
 ---
@@ -128,6 +129,51 @@ Leave `API_KEY` empty to disable authentication entirely.
 ```
 
 > Uses `query_points` to retrieve the top-5 nearest neighbours by cosine similarity. Each neighbour's score is weighted by similarity and aggregated per sentiment class to produce a confidence breakdown.
+
+---
+
+### `POST /analyze-batch` – Predict sentiment for multiple inputs
+
+Embed **all** inputs in a single Jina round-trip, then query Qdrant via `query_batch_points` (one vector search per item, sent as a single server-side batch request). Returns results in the same order as the input list.
+
+```json
+{
+  "items": [
+    "Shipping was super fast!",
+    "Total waste of money.",
+    "Product arrived on time."
+  ]
+}
+```
+
+**Response**
+
+```json
+{
+  "results": [
+    {
+      "content": "Shipping was super fast!",
+      "sentiment": "positive",
+      "confidence": { "positive": 0.91, "neutral": 0.09 },
+      "matches": [ { "point_id": "...", "content": "...", "sentiment": "positive", "score": 0.96 } ]
+    },
+    {
+      "content": "Total waste of money.",
+      "sentiment": "negative",
+      "confidence": { "negative": 1.0 },
+      "matches": [ { "point_id": "...", "content": "...", "sentiment": "negative", "score": 0.93 } ]
+    },
+    {
+      "content": "Product arrived on time.",
+      "sentiment": "neutral",
+      "confidence": { "neutral": 0.78, "positive": 0.22 },
+      "matches": [ { "point_id": "...", "content": "...", "sentiment": "neutral", "score": 0.89 } ]
+    }
+  ]
+}
+```
+
+> Max batch size is controlled by `MAX_ANALYZE_BATCH` (default `64`). Items with no neighbours return `"sentiment": null`.
 
 ---
 

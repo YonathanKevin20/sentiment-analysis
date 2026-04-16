@@ -20,6 +20,7 @@ from qdrant_client import AsyncQdrantClient
 from qdrant_client.models import (
   Distance, VectorParams, PointStruct,
   Filter, FieldCondition, MatchValue,
+  QueryRequest,
 )
 
 API_NAME = os.getenv("API_NAME", "Sentiment Analysis API")
@@ -41,6 +42,7 @@ MAX_CONTENT_LEN   = int(os.getenv("MAX_CONTENT_LEN", "5000"))  # chars per text
 MAX_TRAIN_ITEMS   = int(os.getenv("MAX_TRAIN_ITEMS", "256"))    # items per /train call
 MAX_IMPORT_ROWS   = int(os.getenv("MAX_IMPORT_ROWS", "10000")) # rows per CSV import
 MAX_UPLOAD_MB     = int(os.getenv("MAX_UPLOAD_MB", "10"))       # CSV file size cap
+MAX_ANALYZE_BATCH = int(os.getenv("MAX_ANALYZE_BATCH", "64"))   # items per /analyze-batch call
 
 JINA_EMBED_URL    = "https://api.jina.ai/v1/embeddings"
 JINA_TIMEOUT      = int(os.getenv("JINA_TIMEOUT", "30"))       # seconds
@@ -216,6 +218,9 @@ class TrainingRequest(BaseModel):
 class AnalyzeRequest(BaseModel):
   content: str = Field(..., min_length=1, max_length=MAX_CONTENT_LEN)
 
+class AnalyzeBatchRequest(BaseModel):
+  items: list[str] = Field(..., min_length=1, max_length=MAX_ANALYZE_BATCH, description="List of content strings to analyse (max MAX_ANALYZE_BATCH).")
+
 class UpdateRequest(BaseModel):
   content: Optional[str] = Field(None, max_length=MAX_CONTENT_LEN)
   sentiment: Optional[str] = None
@@ -369,6 +374,78 @@ async def analyze(req: AnalyzeRequest):
     "confidence": confidence,
     "matches":    matches,
   }
+
+
+@app.post("/analyze-batch", summary="Predict sentiment for multiple inputs in one call", dependencies=[Depends(verify_api_key)])
+async def analyze_batch(req: AnalyzeBatchRequest):
+  """
+  Embed all inputs in a single Jina call, then fan out to Qdrant via
+  query_batch_points (one search per input, executed server-side in one
+  round-trip).  Returns a result object for every input, preserving order.
+  """
+  # Cleanse all inputs up front
+  contents = [cleanse_text(c) for c in req.items]
+  empty = [i for i, c in enumerate(contents) if not c]
+  if empty:
+    raise HTTPException(
+      status_code=422,
+      detail=f"Items at index {empty} are empty after cleansing.",
+    )
+
+  # Single Jina round-trip for all items
+  vectors = await embed(contents)
+
+  # Build one query per input
+  queries = [
+    QueryRequest(query=vec, limit=5, with_payload=True)
+    for vec in vectors
+  ]
+
+  try:
+    batch_response = await qdrant.query_batch_points(
+      collection_name=COLLECTION_NAME,
+      requests=queries,
+    )
+  except Exception as exc:
+    logger.error("Qdrant batch query error: %s", exc)
+    raise HTTPException(status_code=502, detail="Vector batch search failed.")
+
+  results = []
+  for content, scored_points in zip(contents, batch_response):
+    points = scored_points.points
+    if not points:
+      results.append({
+        "content":    content,
+        "sentiment":  None,
+        "confidence": {},
+        "matches":    [],
+      })
+      continue
+
+    votes: dict[str, float] = {}
+    matches = []
+    for hit in points:
+      sent = hit.payload["sentiment"]
+      votes[sent] = votes.get(sent, 0.0) + hit.score
+      matches.append({
+        "point_id":  hit.id,
+        "content":   hit.payload["content"],
+        "sentiment": sent,
+        "score":     round(hit.score, 4),
+      })
+
+    total = sum(votes.values())
+    sentiment = max(votes, key=votes.__getitem__)
+    confidence = {k: round(v / total, 4) for k, v in votes.items()}
+
+    results.append({
+      "content":    content,
+      "sentiment":  sentiment,
+      "confidence": confidence,
+      "matches":    matches,
+    })
+
+  return {"results": results}
 
 
 @app.patch("/points/{point_id}", summary="Update payload of a point", dependencies=[Depends(verify_api_key)])
