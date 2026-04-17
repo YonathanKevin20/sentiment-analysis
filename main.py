@@ -342,7 +342,7 @@ async def analyze(req: AnalyzeRequest):
     response = await qdrant.query_points(
       collection_name=COLLECTION_NAME,
       query=vectors[0],
-      limit=5,
+      limit=10,
       with_payload=True,
     )
   except Exception as exc:
@@ -356,7 +356,8 @@ async def analyze(req: AnalyzeRequest):
   matches = []
   for hit in response.points:
     sent = hit.payload["sentiment"]
-    votes[sent] = votes.get(sent, 0.0) + hit.score
+    weight = 2.0 if hit.score >= 0.9 else 1.0
+    votes[sent] = votes.get(sent, 0.0) + hit.score * weight
     matches.append({
       "point_id":  hit.id,
       "content":   hit.payload["content"],
@@ -397,7 +398,7 @@ async def analyze_batch(req: AnalyzeBatchRequest):
 
   # Build one query per input
   queries = [
-    QueryRequest(query=vec, limit=5, with_payload=True)
+    QueryRequest(query=vec, limit=10, with_payload=True)
     for vec in vectors
   ]
 
@@ -426,7 +427,8 @@ async def analyze_batch(req: AnalyzeBatchRequest):
     matches = []
     for hit in points:
       sent = hit.payload["sentiment"]
-      votes[sent] = votes.get(sent, 0.0) + hit.score
+      weight = 2.0 if hit.score >= 0.9 else 1.0
+      votes[sent] = votes.get(sent, 0.0) + hit.score * weight
       matches.append({
         "point_id":  hit.id,
         "content":   hit.payload["content"],
