@@ -129,11 +129,36 @@ async def verify_api_key(key: Optional[str] = Security(api_key_header)):
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
+_ZERO_WIDTH = re.compile(r"[\u200b\u200c\u200d\ufeff]")
+_NON_PRINTABLE_ASCII = re.compile(r"[^\x20-\x7E]")
+_WHITESPACE_RUNS = re.compile(r" {2,}")
+
+
 def cleanse_text(text: str) -> str:
-  """Normalise whitespace: collapse runs of spaces/tabs/newlines into a single space and strip."""
+  """
+  Normalize and sanitize a string:
+    - Collapse all line endings and whitespace into single spaces
+    - Remove zero-width / invisible Unicode characters
+    - Remove non-printable ASCII (emoji, control chars, etc.)
+    - Normalize backslashes → forward slashes
+    - Normalize double quotes → single quotes
+  """
+  # 1. Normalize all line endings to a space
   text = text.replace("\r\n", " ").replace("\r", " ").replace("\n", " ")
-  text = re.sub(r"[\u200b\u200c\u200d\ufeff]", "", text)   # zero-width chars
-  text = re.sub(r"\s+", " ", text)                          # collapse whitespace
+
+  # 2. Remove zero-width invisible characters (subset of non-ASCII, but explicit)
+  text = _ZERO_WIDTH.sub("", text)
+
+  # 3. Normalize slashes and quotes before stripping non-ASCII
+  text = text.replace("\\", "/")
+  text = text.replace('"', "'")
+
+  # 4. Replace non-printable ASCII with a space (catches Unicode, emoji, etc.)
+  text = _NON_PRINTABLE_ASCII.sub(" ", text)
+
+  # 5. Collapse any multi-space runs introduced by the steps above
+  text = _WHITESPACE_RUNS.sub(" ", text)
+
   return text.strip()
 
 
