@@ -19,7 +19,6 @@ import httpx
 from qdrant_client import AsyncQdrantClient
 from qdrant_client.models import (
   Distance, VectorParams, PointStruct,
-  Filter, FieldCondition, MatchValue,
   QueryRequest,
 )
 
@@ -43,6 +42,7 @@ MAX_TRAIN_ITEMS   = int(os.getenv("MAX_TRAIN_ITEMS", "256"))    # items per /tra
 MAX_IMPORT_ROWS   = int(os.getenv("MAX_IMPORT_ROWS", "10000")) # rows per CSV import
 MAX_UPLOAD_MB     = int(os.getenv("MAX_UPLOAD_MB", "10"))       # CSV file size cap
 MAX_ANALYZE_BATCH = int(os.getenv("MAX_ANALYZE_BATCH", "64"))   # items per /analyze-batch call
+MAX_CLUSTER_BATCH = int(os.getenv("MAX_CLUSTER_BATCH", "16"))    # items per /cluster-batch call
 
 JINA_EMBED_URL    = "https://api.jina.ai/v1/embeddings"
 JINA_TIMEOUT      = int(os.getenv("JINA_TIMEOUT", "30"))       # seconds
@@ -178,7 +178,7 @@ def deterministic_uuid(content: str) -> str:
   return str(uuid.uuid5(uuid.NAMESPACE_DNS, content))
 
 
-async def embed(texts: list[str]) -> list[list[float]]:
+async def embed(texts: list[str], task: str = "classification") -> list[list[float]]:
   """Call Jina AI and decode base64 → float32 vectors.  Uses the shared httpx client."""
   if not JINA_API_KEY:
     raise HTTPException(status_code=503, detail="JINA_API_KEY is not configured.")
@@ -189,7 +189,7 @@ async def embed(texts: list[str]) -> list[list[float]]:
   }
   payload = {
     "model": "jina-embeddings-v5-text-small",
-    "task": "classification",
+    "task": task,
     "truncate": True,
     "normalized": True,
     "embedding_type": "base64",
@@ -244,7 +244,23 @@ class AnalyzeRequest(BaseModel):
   content: str = Field(..., min_length=1, max_length=MAX_CONTENT_LEN)
 
 class AnalyzeBatchRequest(BaseModel):
-  items: list[Annotated[str, Field(min_length=1, max_length=MAX_CONTENT_LEN)]] = Field(..., min_length=1, max_length=MAX_ANALYZE_BATCH, description=f"List of content strings to analyse (max {MAX_ANALYZE_BATCH} items, each up to {MAX_CONTENT_LEN} chars).")
+  items: list[Annotated[str, Field(min_length=1, max_length=MAX_CONTENT_LEN)]] = Field(
+    ...,
+    min_length=1,
+    max_length=MAX_ANALYZE_BATCH,
+    description=f"List of content strings to analyse (max {MAX_ANALYZE_BATCH} items, each up to {MAX_CONTENT_LEN} chars)."
+  )
+
+class ClusterBatchRequest(BaseModel):
+  items: list[Annotated[str, Field(min_length=1, max_length=MAX_CONTENT_LEN)]] = Field(
+    ...,
+    min_length=1,
+    max_length=MAX_CLUSTER_BATCH,
+    description=(
+      f"List of content strings to embed for clustering "
+      f"(max {MAX_CLUSTER_BATCH} items, each up to {MAX_CONTENT_LEN} chars)."
+    ),
+  )
 
 class UpdateRequest(BaseModel):
   content: Optional[str] = Field(None, max_length=MAX_CONTENT_LEN)
@@ -444,22 +460,14 @@ async def analyze_batch(req: AnalyzeBatchRequest):
         "content":    content,
         "sentiment":  None,
         "confidence": {},
-        "matches":    [],
       })
       continue
 
     votes: dict[str, float] = {}
-    matches = []
     for hit in points:
       sent = hit.payload["sentiment"]
       weight = 2.0 if hit.score >= 0.9 else 1.0
       votes[sent] = votes.get(sent, 0.0) + hit.score * weight
-      matches.append({
-        "point_id":  hit.id,
-        "content":   hit.payload["content"],
-        "sentiment": sent,
-        "score":     round(hit.score, 4),
-      })
 
     total = sum(votes.values())
     sentiment = max(votes, key=votes.__getitem__)
@@ -469,7 +477,6 @@ async def analyze_batch(req: AnalyzeBatchRequest):
       "content":    content,
       "sentiment":  sentiment,
       "confidence": confidence,
-      "matches":    matches,
     })
 
   return {"results": results}
@@ -736,6 +743,32 @@ async def delete_point(point_id: str):
     points_selector=[point_id],
   )
   return {"deleted": point_id}
+
+
+@app.post("/cluster-batch", summary="Get clustering embeddings for multiple texts", dependencies=[Depends(verify_api_key)])
+async def cluster_batch(req: ClusterBatchRequest):
+  """
+  Embed all inputs using Jina AI with task="clustering" and return the raw
+  float32 vectors.  Useful for downstream clustering algorithms (k-means,
+  HDBSCAN, etc.) where you need semantically-aware distance-preserving vectors
+  rather than classification-optimised ones.
+  """
+  contents = [cleanse_text(c) for c in req.items]
+  empty = [i for i, c in enumerate(contents) if not c]
+  if empty:
+    raise HTTPException(
+      status_code=422,
+      detail=f"Items at index {empty} are empty after cleansing.",
+    )
+
+  vectors = await embed(contents, task="clustering")
+
+  return {
+    "results": [
+      {"content": content, "embedding": vector}
+      for content, vector in zip(contents, vectors)
+    ]
+  }
 
 
 @app.get("/health", summary="Health check")

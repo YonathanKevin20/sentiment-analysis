@@ -14,7 +14,7 @@ Client ──► FastAPI ──► Jina AI (jina-embeddings-v5-text-small)
 | Component | Role |
 |-----------|------|
 | **FastAPI** | REST layer, request validation, CSV streaming |
-| **Jina AI** | Embeds text → 1024-dim float32 vectors (base64-encoded, classification task) |
+| **Jina AI** | Embeds text → 1024-dim float32 vectors (base64-encoded, `classification` task for sentiment, `clustering` task for `/cluster-batch`) |
 | **Qdrant** | Stores vectors + payload; deterministic UUIDs prevent duplicates |
 
 ---
@@ -66,6 +66,7 @@ Interactive docs: `http://localhost:8000/docs`
 | `MAX_IMPORT_ROWS` | `10000` | Max rows per CSV import |
 | `MAX_UPLOAD_MB` | `10` | Max CSV file size in MB |
 | `MAX_ANALYZE_BATCH` | `64` | Max items per `/analyze-batch` request |
+| `MAX_CLUSTER_BATCH` | `16` | Max items per `/cluster-batch` request (per-text length follows `MAX_CONTENT_LEN`) |
 | `LOG_LEVEL` | `INFO` | Logging level (`DEBUG`, `INFO`, `WARNING`, `ERROR`) |
 
 ---
@@ -128,7 +129,7 @@ Leave `API_KEY` empty to disable authentication entirely.
 }
 ```
 
-> Uses `query_points` to retrieve the top-5 nearest neighbours by cosine similarity. Each neighbour's score is weighted by similarity and aggregated per sentiment class to produce a confidence breakdown.
+> Uses `query_points` to retrieve the **top-10** nearest neighbours by cosine similarity. Each neighbour's score is weighted by similarity and aggregated per sentiment class. Matches with a score **≥ 0.9** receive a **2× weight boost** to strengthen high-confidence predictions.
 
 ---
 
@@ -174,6 +175,39 @@ Embed **all** inputs in a single Jina round-trip, then query Qdrant via `query_b
 ```
 
 > Max batch size is controlled by `MAX_ANALYZE_BATCH` (default `64`). Items with no neighbours return `"sentiment": null`.
+> The same top-10 / 2× weight-boost logic as `/analyze` applies to each item in the batch.
+
+---
+
+### `POST /cluster-batch` – Get clustering embeddings
+
+Embed multiple texts using the **`clustering` task** of `jina-embeddings-v5-text-small` and return the raw float32 vectors. Useful for downstream clustering algorithms (k-means, HDBSCAN, etc.) where distance-preserving representations are preferred over classification-optimised ones.
+
+```json
+{
+  "items": [
+    "The battery life is outstanding.",
+    "Delivery was delayed by two weeks.",
+    "Great value for the price."
+  ]
+}
+```
+
+**Response**
+
+```json
+{
+  "results": [
+    { "content": "The battery life is outstanding.", "embedding": [0.021, -0.043, "..."] },
+    { "content": "Delivery was delayed by two weeks.", "embedding": [0.011, 0.067, "..."] },
+    { "content": "Great value for the price.", "embedding": [-0.005, 0.031, "..."] }
+  ]
+}
+```
+
+> Each `embedding` is a 1024-element float32 array ready to feed into a clustering library.
+> Max items: `MAX_CLUSTER_BATCH` (default **16**). Per-text length follows the global `MAX_CONTENT_LEN` (default **5000**). Auth required.
+> Worst-case response size: 16 × 1024 floats ≈ **~130 KB**.
 
 ---
 
@@ -277,7 +311,12 @@ Every response includes:
 
 ## Embedding Details
 
-Jina AI is called with:
+Jina AI is called with the following payload. The `task` field varies by endpoint:
+
+| Endpoint(s) | `task` value |
+|---|---|
+| `/train`, `/analyze`, `/analyze-batch`, `/import` | `"classification"` |
+| `/cluster-batch` | `"clustering"` |
 
 ```json
 {
@@ -327,10 +366,11 @@ This ensures consistent embeddings regardless of how the source text is formatte
 ## Sentiment Prediction Logic
 
 1. Query vector is compared against all stored vectors using **cosine similarity** via Qdrant's `query_points` API.
-2. Top-5 nearest neighbours are retrieved.
+2. **Top-10** nearest neighbours are retrieved.
 3. A weighted vote is computed: each neighbour's similarity score contributes to its sentiment class.
-4. The class with the highest total score is returned as the predicted sentiment.
-5. Confidence values are normalized across classes.
+4. Matches with a score **≥ 0.9** receive a **2× weight boost** to strengthen high-confidence predictions.
+5. The class with the highest total weighted score is returned as the predicted sentiment.
+6. Confidence values are normalised across all classes.
 
 ---
 
