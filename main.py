@@ -119,7 +119,7 @@ async def request_meta_middleware(request: Request, call_next):
 api_key_header = APIKeyHeader(name="X-API-Key", auto_error=False)
 
 
-async def verify_api_key(key: Optional[str] = Security(api_key_header)):
+def verify_api_key(key: Optional[str] = Security(api_key_header)) -> None:
   """If API_KEY env is set, every request must provide a matching X-API-Key header."""
   if not API_KEY:
     return  # auth disabled
@@ -135,14 +135,6 @@ _WHITESPACE_RUNS = re.compile(r" {2,}")
 
 
 def cleanse_text(text: str) -> str:
-  """
-  Normalize and sanitize a string:
-    - Collapse all line endings and whitespace into single spaces
-    - Remove zero-width / invisible Unicode characters
-    - Remove non-printable ASCII (emoji, control chars, etc.)
-    - Normalize backslashes → forward slashes
-    - Normalize double quotes → single quotes
-  """
   # 1. Normalize all line endings to a space
   text = text.replace("\r\n", " ").replace("\r", " ").replace("\n", " ")
 
@@ -156,7 +148,10 @@ def cleanse_text(text: str) -> str:
   # 4. Replace non-printable ASCII with a space (catches Unicode, emoji, etc.)
   text = _NON_PRINTABLE_ASCII.sub(" ", text)
 
-  # 5. Collapse any multi-space runs introduced by the steps above
+  # 5. Remove any URLs
+  text = re.sub(r"https?://\S+|www\.\S+", "", text)
+
+  # 6. Collapse any multi-space runs introduced by the steps above
   text = _WHITESPACE_RUNS.sub(" ", text)
 
   return text.strip()
