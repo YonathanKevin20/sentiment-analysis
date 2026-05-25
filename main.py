@@ -141,17 +141,20 @@ def cleanse_text(text: str) -> str:
   # 2. Remove zero-width invisible characters (subset of non-ASCII, but explicit)
   text = _ZERO_WIDTH.sub("", text)
 
-  # 3. Normalize slashes and quotes before stripping non-ASCII
+  # 3. Remove literal Unicode escape sequences (e.g. \u2013, \u00a0)
+  text = re.sub(r"\\u[0-9a-fA-F]{4}", "", text)
+
+  # 4. Normalize slashes and quotes before stripping non-ASCII
   text = text.replace("\\", "/")
   text = text.replace('"', "'")
 
-  # 4. Replace non-printable ASCII with a space (catches Unicode, emoji, etc.)
+  # 5. Replace non-printable ASCII with a space (catches Unicode, emoji, etc.)
   text = _NON_PRINTABLE_ASCII.sub(" ", text)
 
-  # 5. Remove any URLs
+  # 6. Remove any URLs
   text = re.sub(r"https?://\S+|www\.\S+", "", text)
 
-  # 6. Collapse any multi-space runs introduced by the steps above
+  # 7. Collapse any multi-space runs introduced by the steps above
   text = _WHITESPACE_RUNS.sub(" ", text)
 
   return text.strip()
